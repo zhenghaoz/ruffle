@@ -195,9 +195,7 @@ impl ShapeTessellator {
         self.flush_draw(DrawType::Color);
 
         self.lyon_mesh = VertexBuffers::new();
-        Mesh {
-            draws: std::mem::take(&mut self.mesh),
-        }
+        std::mem::take(&mut self.mesh)
     }
 
     fn flush_draw(&mut self, draw: DrawType) {
@@ -226,9 +224,7 @@ impl Default for ShapeTessellator {
     }
 }
 
-pub struct Mesh {
-    pub draws: Vec<Draw>,
-}
+type Mesh = Vec<Draw>;
 
 pub struct Draw {
     pub draw_type: DrawType,
