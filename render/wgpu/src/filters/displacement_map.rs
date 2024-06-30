@@ -10,7 +10,7 @@ use ruffle_render::filters::{
     DisplacementMapFilter as DisplacementMapFilterArgs, DisplacementMapFilterMode,
 };
 use std::sync::OnceLock;
-use wgpu::util::StagingBelt;
+use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable, PartialEq)]
@@ -33,14 +33,11 @@ struct DisplacementMapUniform {
 pub struct DisplacementMapFilter {
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    buffer: wgpu::Buffer,
-    buffer_size: wgpu::BufferSize,
     pipelines: SampleCountMap<OnceLock<wgpu::RenderPipeline>>,
 }
 
 impl DisplacementMapFilter {
     pub fn new(device: &wgpu::Device) -> Self {
-        let buffer_size = std::mem::size_of::<DisplacementMapUniform>() as u64;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -81,7 +78,9 @@ impl DisplacementMapFilter {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(buffer_size),
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                            DisplacementMapUniform,
+                        >() as u64),
                     },
                     count: None,
                 },
@@ -95,19 +94,10 @@ impl DisplacementMapFilter {
             push_constant_ranges: &[],
         });
 
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: buffer_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             pipelines: Default::default(),
             pipeline_layout,
-            buffer,
             bind_group_layout,
-            buffer_size: wgpu::BufferSize::new(buffer_size).expect("Definitely not zero."),
         }
     }
 
@@ -156,7 +146,6 @@ impl DisplacementMapFilter {
         descriptors: &Descriptors,
         texture_pool: &mut TexturePool,
         draw_encoder: &mut wgpu::CommandEncoder,
-        staging_belt: &mut StagingBelt,
         source: &FilterSource,
         filter: &DisplacementMapFilterArgs,
     ) -> Option<CommandTarget> {
@@ -181,39 +170,37 @@ impl DisplacementMapFilter {
         let map_handle = filter.map_bitmap.clone()?;
         let map_texture = as_texture(&map_handle);
         let map_view = map_texture.texture.create_view(&Default::default());
-        staging_belt
-            .write_buffer(
-                draw_encoder,
-                &self.buffer,
-                0,
-                self.buffer_size,
-                &descriptors.device,
-            )
-            .copy_from_slice(bytemuck::cast_slice(&[DisplacementMapUniform {
-                color: [
-                    f32::from(filter.color.r) / 255.0,
-                    f32::from(filter.color.g) / 255.0,
-                    f32::from(filter.color.b) / 255.0,
-                    f32::from(filter.color.a) / 255.0,
-                ],
-                components: ((filter.component_x as u32) << 8) | (filter.component_y as u32),
-                mode: match filter.mode {
-                    DisplacementMapFilterMode::Wrap => 0,
-                    DisplacementMapFilterMode::Clamp => 1,
-                    DisplacementMapFilterMode::Ignore => 2,
-                    DisplacementMapFilterMode::Color => 3,
-                },
-                scale_x: filter.scale_x,
-                scale_y: filter.scale_y,
-                source_width: source.texture.width() as f32,
-                source_height: source.texture.height() as f32,
-                map_width: map_texture.texture.width() as f32,
-                map_height: map_texture.texture.height() as f32,
-                offset_x: filter.map_point.0 as f32,
-                offset_y: filter.map_point.1 as f32,
-                viewscale_x: filter.viewscale_x,
-                viewscale_y: filter.viewscale_y,
-            }]));
+        let buffer = descriptors
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: create_debug_label!("Filter arguments").as_deref(),
+                contents: bytemuck::cast_slice(&[DisplacementMapUniform {
+                    color: [
+                        f32::from(filter.color.r) / 255.0,
+                        f32::from(filter.color.g) / 255.0,
+                        f32::from(filter.color.b) / 255.0,
+                        f32::from(filter.color.a) / 255.0,
+                    ],
+                    components: ((filter.component_x as u32) << 8) | (filter.component_y as u32),
+                    mode: match filter.mode {
+                        DisplacementMapFilterMode::Wrap => 0,
+                        DisplacementMapFilterMode::Clamp => 1,
+                        DisplacementMapFilterMode::Ignore => 2,
+                        DisplacementMapFilterMode::Color => 3,
+                    },
+                    scale_x: filter.scale_x,
+                    scale_y: filter.scale_y,
+                    source_width: source.texture.width() as f32,
+                    source_height: source.texture.height() as f32,
+                    map_width: map_texture.texture.width() as f32,
+                    map_height: map_texture.texture.height() as f32,
+                    offset_x: filter.map_point.0 as f32,
+                    offset_y: filter.map_point.1 as f32,
+                    viewscale_x: filter.viewscale_x,
+                    viewscale_y: filter.viewscale_y,
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
         let vertices = source.vertices(&descriptors.device);
         let filter_group = descriptors
             .device
@@ -243,7 +230,7 @@ impl DisplacementMapFilter {
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: self.buffer.as_entire_binding(),
+                        resource: buffer.as_entire_binding(),
                     },
                 ],
             });
