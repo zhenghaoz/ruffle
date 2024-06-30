@@ -5,8 +5,7 @@ use crate::backend::{
     BitmapCacheEntry, RenderBackend, ShapeHandle, ShapeHandleImpl, ViewportDimensions,
 };
 use crate::bitmap::{
-    Bitmap, BitmapHandle, BitmapHandleImpl, BitmapSize, BitmapSource, PixelRegion, RgbaBufRead,
-    SyncHandle,
+    Bitmap, BitmapHandle, BitmapHandleImpl, BitmapSize, BitmapSource, PixelRegion, SyncHandle,
 };
 use crate::commands::CommandList;
 use crate::error::Error;
@@ -119,14 +118,6 @@ impl RenderBackend for NullRenderer {
         _target: &PixelBenderTarget,
     ) -> Result<PixelBenderOutput, Error> {
         Err(Error::Unimplemented("Pixel bender shader".into()))
-    }
-
-    fn resolve_sync_handle(
-        &mut self,
-        _handle: Box<dyn SyncHandle>,
-        _with_rgba: RgbaBufRead,
-    ) -> Result<(), Error> {
-        Err(Error::Unimplemented("Sync handle resolution".into()))
     }
 
     fn compile_pixelbender_shader(
