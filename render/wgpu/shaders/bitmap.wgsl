@@ -7,9 +7,10 @@ struct VertexOutput {
 };
 
 @group(1) @binding(0) var<uniform> transforms: common__Transforms;
-@group(2) @binding(0) var<uniform> textureTransforms: common__TextureTransforms;
-@group(2) @binding(1) var texture: texture_2d<f32>;
-@group(2) @binding(2) var texture_sampler: sampler;
+@group(2) @binding(0) var<uniform> colorTransforms: common__ColorTransforms;
+@group(3) @binding(0) var<uniform> textureTransforms: common__TextureTransforms;
+@group(3) @binding(1) var texture: texture_2d<f32>;
+@group(3) @binding(2) var texture_sampler: sampler;
 override late_saturate: bool = false;
 
 @vertex
@@ -27,7 +28,7 @@ fn main_fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Unmultiply alpha, apply color transform, remultiply alpha.
     if( color.a > 0.0 ) {
         color = vec4<f32>(color.rgb / color.a, color.a);
-        color = color * transforms.mult_color + transforms.add_color;
+        color = color * colorTransforms.mult_color + colorTransforms.add_color;
         if (!late_saturate) {
             color = saturate(color);
         }

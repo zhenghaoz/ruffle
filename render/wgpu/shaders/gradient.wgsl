@@ -6,7 +6,8 @@ struct VertexOutput {
 };
 
 @group(1) @binding(0) var<uniform> transforms: common__Transforms;
-@group(2) @binding(0) var<uniform> textureTransforms: common__TextureTransforms;
+@group(2) @binding(0) var<uniform> colorTransforms: common__ColorTransforms;
+@group(3) @binding(0) var<uniform> textureTransforms: common__TextureTransforms;
 
 struct Gradient {
     focal_point: f32,
@@ -15,9 +16,9 @@ struct Gradient {
     repeat: i32,
 };
 
-@group(2) @binding(1) var<uniform> gradient: Gradient;
-@group(2) @binding(2) var texture: texture_2d<f32>;
-@group(2) @binding(3) var texture_sampler: sampler;
+@group(3) @binding(1) var<uniform> gradient: Gradient;
+@group(3) @binding(2) var texture: texture_2d<f32>;
+@group(3) @binding(3) var texture_sampler: sampler;
 
 struct GradientVertexInput {
     /// The position of the vertex in object space.
@@ -77,7 +78,7 @@ fn main_fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if( gradient.interpolation != 0 ) {
         color = common__linear_to_srgb(color);
     }
-    let out = saturate(color * transforms.mult_color + transforms.add_color);
+    let out = saturate(color * colorTransforms.mult_color + colorTransforms.add_color);
     let alpha = saturate(out.a);
     return vec4<f32>(out.rgb * alpha, alpha);
 }
