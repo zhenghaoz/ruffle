@@ -149,7 +149,7 @@ impl From<TessGradient> for GradientUniforms {
 #[derive(Debug)]
 pub enum QueueSyncHandle {
     AlreadyCopied {
-        index: Option<wgpu::SubmissionIndex>,
+        index: wgpu::SubmissionIndex,
         buffer: PoolEntry<wgpu::Buffer, BufferDimensions>,
         copy_dimensions: BufferDimensions,
         descriptors: Arc<Descriptors>,
@@ -184,7 +184,7 @@ impl QueueSyncHandle {
                 &descriptors.device,
                 &buffer,
                 &copy_dimensions,
-                index,
+                Some(index),
                 with_rgba,
             ),
             QueueSyncHandle::NotCopied {
