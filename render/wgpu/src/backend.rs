@@ -45,6 +45,7 @@ const TEXTURE_READS_BEFORE_PROMOTION: u8 = 5;
 
 pub struct WgpuRenderBackend<T: RenderTarget> {
     pub(crate) descriptors: Arc<Descriptors>,
+    staging_belt: wgpu::util::StagingBelt,
     target: T,
     surface: Surface,
     meshes: Vec<Mesh>,
@@ -56,7 +57,6 @@ pub struct WgpuRenderBackend<T: RenderTarget> {
     offscreen_texture_pool: TexturePool,
     pub(crate) offscreen_buffer_pool: Arc<BufferPool<wgpu::Buffer, BufferDimensions>>,
     dynamic_transforms: DynamicTransforms,
-    active_frame: ActiveFrame,
 }
 
 impl WgpuRenderBackend<SwapChainTarget> {
@@ -219,10 +219,10 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
         ));
 
         let transforms = DynamicTransforms::new(&descriptors);
-        let active_frame = ActiveFrame::new(&descriptors);
 
         Ok(Self {
             descriptors,
+            staging_belt: wgpu::util::StagingBelt::new(65536),
             target,
             surface,
             meshes: Vec::new(),
@@ -232,7 +232,6 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
             offscreen_texture_pool: TexturePool::new(),
             offscreen_buffer_pool: Arc::new(offscreen_buffer_pool),
             dynamic_transforms: transforms,
-            active_frame,
         })
     }
 
@@ -535,6 +534,14 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             }
         };
 
+        let label = create_debug_label!("Draw encoder");
+        let mut draw_encoder =
+            self.descriptors
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: label.as_deref(),
+                });
+
         for entry in cache_entries {
             let texture = as_texture(&entry.handle);
             let mut surface = Surface::new(
@@ -558,9 +565,9 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                     &self.descriptors,
                     &self.meshes,
                     entry.commands,
-                    &mut self.active_frame.staging_belt,
+                    &mut self.staging_belt,
                     &self.dynamic_transforms,
-                    &mut self.active_frame.command_encoder,
+                    &mut draw_encoder,
                     LayerRef::None,
                     &mut self.offscreen_texture_pool,
                 );
@@ -582,18 +589,18 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                     &self.descriptors,
                     &self.meshes,
                     entry.commands,
-                    &mut self.active_frame.staging_belt,
+                    &mut self.staging_belt,
                     &self.dynamic_transforms,
-                    &mut self.active_frame.command_encoder,
+                    &mut draw_encoder,
                     LayerRef::None,
                     &mut self.offscreen_texture_pool,
                 );
                 for filter in entry.filters {
                     target = self.descriptors.filters.apply(
                         &self.descriptors,
-                        &mut self.active_frame.command_encoder,
+                        &mut draw_encoder,
                         &mut self.offscreen_texture_pool,
-                        &mut self.active_frame.staging_belt,
+                        &mut self.staging_belt,
                         FilterSource::for_entire_texture(target.color_texture()),
                         filter,
                     );
@@ -607,7 +614,7 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                     target.whole_frame_bind_group(&self.descriptors),
                     target.globals(),
                     target.color_texture().sample_count(),
-                    &mut self.active_frame.command_encoder,
+                    &mut draw_encoder,
                 );
             }
         }
@@ -621,18 +628,23 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                 a: f64::from(clear.a) / 255.0,
             }),
             &self.descriptors,
-            &mut self.active_frame.staging_belt,
+            &mut self.staging_belt,
             &self.dynamic_transforms,
-            &mut self.active_frame.command_encoder,
+            &mut draw_encoder,
             &self.meshes,
             commands,
             LayerRef::None,
             &mut self.texture_pool,
         );
-        self.active_frame.staging_belt.finish();
+        self.staging_belt.finish();
 
-        self.active_frame
-            .submit(&self.descriptors, &self.target, frame_output);
+        self.target.submit(
+            &self.descriptors.device,
+            &self.descriptors.queue,
+            Some(draw_encoder.finish()),
+            frame_output,
+        );
+        self.staging_belt.recall();
         self.offscreen_texture_pool = TexturePool::new();
     }
 
@@ -774,22 +786,33 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             texture.texture.height(),
             wgpu::TextureFormat::Rgba8Unorm,
         );
+        let label = create_debug_label!("Draw encoder");
+        let mut draw_encoder =
+            self.descriptors
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: label.as_deref(),
+                });
         surface.draw_commands_and_copy_to(
             frame_output.view(),
             RenderTargetMode::FreshWithTexture(target.get_texture()),
             &self.descriptors,
-            &mut self.active_frame.staging_belt,
+            &mut self.staging_belt,
             &self.dynamic_transforms,
-            &mut self.active_frame.command_encoder,
+            &mut draw_encoder,
             &self.meshes,
             commands,
             LayerRef::Current,
             &mut self.offscreen_texture_pool,
         );
-
-        let index = self
-            .active_frame
-            .submit(&self.descriptors, &target, frame_output);
+        self.staging_belt.finish();
+        let index = target.submit(
+            &self.descriptors.device,
+            &self.descriptors.queue,
+            Some(draw_encoder.finish()),
+            frame_output,
+        );
+        self.staging_belt.recall();
 
         Some(self.make_queue_sync_handle(target, Some(index), handle, bounds))
     }
@@ -855,7 +878,7 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             &self.descriptors,
             &mut draw_encoder,
             &mut self.offscreen_texture_pool,
-            &mut self.active_frame.staging_belt,
+            &mut self.staging_belt,
             FilterSource {
                 texture: &source_texture.texture,
                 point: source_point,
@@ -886,14 +909,14 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                 depth_or_array_layers: 1,
             },
         );
-        self.active_frame.staging_belt.finish();
+        self.staging_belt.finish();
         let index = target.submit(
             &self.descriptors.device,
             &self.descriptors.queue,
             Some(draw_encoder.finish()),
             frame_output,
         );
-        self.active_frame.staging_belt.recall();
+        self.staging_belt.recall();
 
         Some(self.make_queue_sync_handle(target, Some(index), destination, copy_area))
     }
@@ -1216,44 +1239,5 @@ impl RenderTargetMode {
             RenderTargetMode::FreshWithTexture(_) => None,
             RenderTargetMode::ExistingWithColor(_, color) => Some(*color),
         }
-    }
-}
-
-pub struct ActiveFrame {
-    staging_belt: wgpu::util::StagingBelt,
-    command_encoder: wgpu::CommandEncoder,
-}
-
-impl ActiveFrame {
-    pub fn new(descriptors: &Descriptors) -> Self {
-        Self {
-            command_encoder: descriptors
-                .device
-                .create_command_encoder(&Default::default()),
-            staging_belt: wgpu::util::StagingBelt::new(65536),
-        }
-    }
-
-    pub fn submit<T: RenderTarget>(
-        &mut self,
-        descriptors: &Descriptors,
-        target: &T,
-        frame: T::Frame,
-    ) -> SubmissionIndex {
-        self.staging_belt.finish();
-        let draw_encoder = std::mem::replace(
-            &mut self.command_encoder,
-            descriptors
-                .device
-                .create_command_encoder(&Default::default()),
-        );
-        let index = target.submit(
-            &descriptors.device,
-            &descriptors.queue,
-            Some(draw_encoder.finish()),
-            frame,
-        );
-        self.staging_belt.recall();
-        index
     }
 }
