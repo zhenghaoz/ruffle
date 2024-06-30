@@ -155,7 +155,7 @@ impl Surface {
                         staging_belt,
                         &descriptors.device,
                         draw_encoder,
-                        &dynamic_transforms.buffer,
+                        &dynamic_transforms.transform.buffer,
                     );
                     let mut render_pass =
                         draw_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
