@@ -4464,7 +4464,6 @@ dependencies = [
  "flate2",
  "gif",
  "h263-rs-yuv",
- "indexmap",
  "jpeg-decoder",
  "lyon",
  "lyon_geom",

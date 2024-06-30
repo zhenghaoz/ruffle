@@ -1,6 +1,5 @@
 use crate::bitmap::BitmapSource;
 use crate::shape_utils::{DistilledShape, DrawCommand, DrawPath, GradientType};
-use indexmap::IndexSet;
 use lyon::path::Path;
 use lyon::tessellation::{
     self,
@@ -15,7 +14,6 @@ pub struct ShapeTessellator {
     fill_tess: FillTessellator,
     stroke_tess: StrokeTessellator,
     mesh: Vec<Draw>,
-    gradients: IndexSet<Gradient>,
     lyon_mesh: VertexBuffers<Vertex, u32>,
     mask_index_count: Option<u32>,
     is_stroke: bool,
@@ -27,7 +25,6 @@ impl ShapeTessellator {
             fill_tess: FillTessellator::new(),
             stroke_tess: StrokeTessellator::new(),
             mesh: Vec::new(),
-            gradients: IndexSet::new(),
             lyon_mesh: VertexBuffers::new(),
             mask_index_count: None,
             is_stroke: false,
@@ -41,9 +38,7 @@ impl ShapeTessellator {
         bitmap_source: &dyn BitmapSource,
     ) -> Mesh {
         self.mesh = Vec::new();
-        self.gradients = IndexSet::new();
         self.lyon_mesh = VertexBuffers::new();
-
         for path in shape.paths {
             let (fill_style, lyon_path, next_is_stroke) = match &path {
                 DrawPath::Fill {
@@ -64,49 +59,36 @@ impl ShapeTessellator {
 
             let (draw, color, needs_flush) = match fill_style {
                 swf::FillStyle::Color(color) => (DrawType::Color, *color, false),
-                swf::FillStyle::LinearGradient(gradient) => {
-                    let uniform =
-                        swf_gradient_to_uniforms(GradientType::Linear, gradient, swf::Fixed8::ZERO);
-                    let (gradient_index, _) = self.gradients.insert_full(uniform);
-
-                    (
-                        DrawType::Gradient {
-                            matrix: swf_to_gl_matrix(gradient.matrix.into()),
-                            gradient: gradient_index,
-                        },
-                        swf::Color::WHITE,
-                        true,
-                    )
-                }
-                swf::FillStyle::RadialGradient(gradient) => {
-                    let uniform =
-                        swf_gradient_to_uniforms(GradientType::Radial, gradient, swf::Fixed8::ZERO);
-                    let (gradient_index, _) = self.gradients.insert_full(uniform);
-                    (
-                        DrawType::Gradient {
-                            matrix: swf_to_gl_matrix(gradient.matrix.into()),
-                            gradient: gradient_index,
-                        },
-                        swf::Color::WHITE,
-                        true,
-                    )
-                }
+                swf::FillStyle::LinearGradient(gradient) => (
+                    DrawType::Gradient(swf_gradient_to_uniforms(
+                        GradientType::Linear,
+                        gradient,
+                        swf::Fixed8::ZERO,
+                    )),
+                    swf::Color::WHITE,
+                    true,
+                ),
+                swf::FillStyle::RadialGradient(gradient) => (
+                    DrawType::Gradient(swf_gradient_to_uniforms(
+                        GradientType::Radial,
+                        gradient,
+                        swf::Fixed8::ZERO,
+                    )),
+                    swf::Color::WHITE,
+                    true,
+                ),
                 swf::FillStyle::FocalGradient {
                     gradient,
                     focal_point,
-                } => {
-                    let uniform =
-                        swf_gradient_to_uniforms(GradientType::Focal, gradient, *focal_point);
-                    let (gradient_index, _) = self.gradients.insert_full(uniform);
-                    (
-                        DrawType::Gradient {
-                            matrix: swf_to_gl_matrix(gradient.matrix.into()),
-                            gradient: gradient_index,
-                        },
-                        swf::Color::WHITE,
-                        true,
-                    )
-                }
+                } => (
+                    DrawType::Gradient(swf_gradient_to_uniforms(
+                        GradientType::Focal,
+                        gradient,
+                        *focal_point,
+                    )),
+                    swf::Color::WHITE,
+                    true,
+                ),
                 swf::FillStyle::Bitmap {
                     id,
                     matrix,
@@ -215,7 +197,6 @@ impl ShapeTessellator {
         self.lyon_mesh = VertexBuffers::new();
         Mesh {
             draws: std::mem::take(&mut self.mesh),
-            gradients: std::mem::take(&mut self.gradients).into_iter().collect(),
         }
     }
 
@@ -247,7 +228,6 @@ impl Default for ShapeTessellator {
 
 pub struct Mesh {
     pub draws: Vec<Draw>,
-    pub gradients: Vec<Gradient>,
 }
 
 pub struct Draw {
@@ -259,10 +239,7 @@ pub struct Draw {
 
 pub enum DrawType {
     Color,
-    Gradient {
-        matrix: [[f32; 3]; 3],
-        gradient: usize,
-    },
+    Gradient(Gradient),
     Bitmap(Bitmap),
 }
 
@@ -276,8 +253,9 @@ impl DrawType {
     }
 }
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Gradient {
+    pub matrix: [[f32; 3]; 3],
     pub gradient_type: GradientType,
     pub repeat_mode: swf::GradientSpread,
     pub focal_point: swf::Fixed8,
@@ -412,6 +390,7 @@ fn swf_gradient_to_uniforms(
     focal_point: swf::Fixed8,
 ) -> Gradient {
     Gradient {
+        matrix: swf_to_gl_matrix(gradient.matrix.into()),
         records: gradient.records.clone(),
         gradient_type,
         repeat_mode: gradient.spread,

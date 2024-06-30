@@ -601,7 +601,7 @@ impl WebGlRenderBackend {
 
             let program = match draw.draw_type {
                 TessDrawType::Color => &self.color_program,
-                TessDrawType::Gradient { .. } => &self.gradient_program,
+                TessDrawType::Gradient(_) => &self.gradient_program,
                 TessDrawType::Bitmap(_) => &self.bitmap_program,
             };
 
@@ -652,11 +652,8 @@ impl WebGlRenderBackend {
                     num_indices,
                     num_mask_indices,
                 },
-                TessDrawType::Gradient { matrix, gradient } => Draw {
-                    draw_type: DrawType::Gradient(Box::new(Gradient::new(
-                        lyon_mesh.gradients[gradient].clone(), // TODO: Gradient deduplication
-                        matrix,
-                    ))),
+                TessDrawType::Gradient(gradient) => Draw {
+                    draw_type: DrawType::Gradient(Box::new(Gradient::from(gradient))),
                     vao,
                     vertex_buffer: Buffer {
                         gl: self.gl.clone(),
@@ -1532,8 +1529,8 @@ struct Gradient {
     interpolation: swf::GradientInterpolation,
 }
 
-impl Gradient {
-    fn new(gradient: TessGradient, matrix: [[f32; 3]; 3]) -> Self {
+impl From<TessGradient> for Gradient {
+    fn from(gradient: TessGradient) -> Self {
         // TODO: Support more than MAX_GRADIENT_COLORS.
         let num_colors = gradient.records.len().min(MAX_GRADIENT_COLORS);
         let mut ratios = [0.0; MAX_GRADIENT_COLORS];
@@ -1562,7 +1559,7 @@ impl Gradient {
         }
 
         Self {
-            matrix,
+            matrix: gradient.matrix,
             gradient_type: match gradient.gradient_type {
                 GradientType::Linear => 0,
                 GradientType::Radial => 1,
