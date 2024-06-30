@@ -3,8 +3,6 @@ use crate::{ColorAdjustments, Transforms};
 use std::marker::PhantomData;
 use std::mem;
 
-const ESTIMATED_OBJECTS_PER_CHUNK: u64 = 200;
-
 pub struct DynamicTransforms {
     pub transform: Inner<Transforms>,
     pub color: Inner<ColorAdjustments>,
@@ -32,9 +30,7 @@ impl<T> Inner<T> {
     pub fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (mem::size_of::<T>() as u64 * ESTIMATED_OBJECTS_PER_CHUNK)
-                .min(device.limits().max_uniform_buffer_binding_size as u64)
-                .min(device.limits().max_buffer_size),
+            size: mem::size_of::<T>() as u64 * 100,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
